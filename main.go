@@ -1,10 +1,13 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
+	"fmt"
 	"log"
 	"net"
 	"strconv"
+	"time"
 )
 
 /*
@@ -19,14 +22,24 @@ Its not designed to be released to the wild and shouldn't be trusted with random
 const host = "127.0.0.1"
 const port = 27403
 
-// Packets type enum
+// Client side packets
 const (
-	InitName = iota + 1
+	InitUser = iota + 1
+	UpdatePos
+)
+
+// Server sside packets
+const (
+	UsersInGame = iota + 1
+	IsUserManager
 	NewPlayerConnected
+	PositionBroadcast
+	ClientSpawnPosition
 )
 
 // Global vars
 var playerList = make([]player, 0)
+var spawnPosition = make([]position, 0)
 
 // Structs
 type packetType struct {
@@ -52,8 +65,8 @@ type player struct {
 	IsDead         bool     // If the player is dead the server shouldnt send his location
 	GotReported    bool     // If the player didnt get reported yet tell the client to show a body on the ground
 	PlayerPosition position // The position of the player in Unity world cordinates
-	Pitch          int      // Should be -90 <= pitch <= 90, represents the head pitch(Up and down)
-	Rotation       int      // Should be 0 <= rotation <= 360, represents the body rotation
+	Pitch          float32  // Should be -90 <= pitch <= 90, represents the head pitch(Up and down)
+	Rotation       float32  // Should be 0 <= rotation <= 360, represents the body rotation
 	isManager      bool     // Wheather the player is the game manager or not, he can start the game
 	index          int      // The current index of the player in the slice
 	connection     net.Conn // The player connection socket
@@ -67,6 +80,8 @@ func main() {
 	log.Println("Listening to connections at '"+host+"' on port", strconv.Itoa(port))
 	defer l.Close()
 
+	initSpawnPosition()
+	go consoleCommands()
 	for {
 		conn, err := l.Accept()
 		if err != nil {
@@ -78,6 +93,16 @@ func main() {
 	}
 }
 
+func (packet packetType) dataToBytes() ([]byte, error) {
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	err := enc.Encode(packet.Data)
+	if err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
+}
+
 func (t player) isInFilter(filter []string) bool {
 	for _, name := range filter {
 		if name == t.Name {
@@ -87,16 +112,25 @@ func (t player) isInFilter(filter []string) bool {
 	return false
 }
 
-func (t player) removePlayerByName() {
-	// var index int
-	// for _, client := range playerList {
-	// 	if client.Name == t.Name {
-	// 		index = client.index
-	// 	}
-	// }
+func (t player) removePlayer() {
 	playerList = append(playerList[:t.index], playerList[t.index+1:]...)
 	for i := 0; i < len(playerList); i++ {
 		playerList[i].index = i // Update all players index
+	}
+}
+
+func consoleCommands() {
+	for {
+		var command string
+		fmt.Scanln(&command)
+		switch {
+		case command == "list":
+			for i, client := range playerList {
+				log.Println(fmt.Sprintf("%v) %v", i, client))
+			}
+		default:
+			log.Println("Unknown command")
+		}
 	}
 }
 
@@ -108,24 +142,44 @@ func handlePlayer(conn net.Conn) {
 	var currUser player
 
 	for {
-		// Get 1KB data, the client shouldnt send more then that to the server
-		buf := make([]byte, 1024)
+		// Read the first 4 bytes and see the packet length
+		buf := make([]byte, 4)
 		size, err := conn.Read(buf)
 		if err != nil {
+			log.Println("Cant first read 4 bytes!")
+			err = nil
 			return
 		}
 		data := buf[:size]
+		readLength, err := strconv.Atoi(string(data))
+		if err != nil {
+			log.Println("Cant convent string size to int!")
+			return
+		}
+
+		buf = make([]byte, readLength)
+		size, err = conn.Read(buf)
+		if err != nil {
+			log.Println("Cant read the rest of the packet!")
+			return
+		}
+		data = buf[:size]
 
 		// Get the packet ID from the JSON
 		var packet packetType
 		err = json.Unmarshal(data, &packet)
 		if err != nil {
-			log.Println("Couldnt parse json player data! Skipping iteration!")
+			log.Println("Couldn't parse json player data! Skipping iteration!")
 			continue
 		}
 
 		switch packet.ID {
-		case InitName: // {"ID":1, "name":"bro"}
+		case InitUser: // {"ID":1, "Data":{"name":"bro"}}
+			data, err := packet.dataToBytes()
+			if err != nil {
+				log.Println("Cant turn inteface to []byte!")
+				return
+			}
 			currUser = genInitPlayerByData(data, conn)
 
 			conenctedUsersJSON, err := json.Marshal(playerList) // Get all the players before adding the current user
@@ -136,7 +190,7 @@ func handlePlayer(conn net.Conn) {
 
 			playerList = append(playerList, currUser) // Add the current user to the player list
 
-			defer currUser.removePlayerByName()
+			defer currUser.removePlayer()
 
 			// Tell old users that a user connected
 			currUserJSON, err := json.Marshal(currUser) // Get all the players before adding the current user
@@ -144,18 +198,100 @@ func handlePlayer(conn net.Conn) {
 				sendErrorMsg(conn, "Error while Marshaling the current user, other users dont know of your existance!")
 			}
 
+			currUserJSON, err = encapsulatePacketID(NewPlayerConnected, currUserJSON)
+			if err != nil {
+				log.Println("Didn't encapsulate currUserJSON with ID")
+			}
 			sendEveryoneData([]byte(currUserJSON), []string{currUser.Name})
 
-			// Tell the current user who is already connected
-			log.Println(string(conenctedUsersJSON))
-			conn.Write(conenctedUsersJSON)
+			// Tell the current user where to spawn at
+			ClientSpawnPositionJSON, err := json.Marshal(currUser.PlayerPosition) // Get all the players before adding the current user
+			if err != nil {
+				sendErrorMsg(conn, "Error while Marshaling the current user position")
+			}
+			ClientSpawnPositionJSON, err = encapsulatePacketID(ClientSpawnPosition, ClientSpawnPositionJSON)
+			if err != nil {
+				log.Println("Didn't encapsulate currUserJSON with ID")
+			}
+			conn.Write([]byte(stampPacketLength(ClientSpawnPositionJSON)))
 
-			log.Println(playerList)
+			// Tell the current user who is already connected
+			conenctedUsersJSON, err = encapsulatePacketID(UsersInGame, conenctedUsersJSON)
+			if err != nil {
+				log.Println("Didn't encapsulate currUserJSON with ID")
+			}
+			conn.Write([]byte(stampPacketLength(conenctedUsersJSON)))
+
+			// Tell the user if he is manager
+			conenctedUsersJSON, err = encapsulatePacketID(IsUserManager, []byte(strconv.FormatBool(currUser.isManager)))
+			if err != nil {
+				log.Println("Didn't encapsulate currUserJSON with ID")
+			}
+			conn.Write([]byte(stampPacketLength(conenctedUsersJSON)))
+
+			log.Println("Started position update thread")
+			go sendPlayerAllPositions(conn, currUser.index)
+		case UpdatePos:
+			var newPosition position
+			data, err := packet.dataToBytes()
+			if err != nil {
+				log.Println("Cant turn inteface to []byte!")
+				return
+			}
+			err = json.Unmarshal(data, &newPosition)
+			if err != nil {
+				log.Println("Cant parse json init player data!")
+			}
+			playerList[currUser.index].PlayerPosition = newPosition
 		default:
-			conn.Write([]byte("Invalid packet type!"))
+			sendErrorMsg(conn, "Invalid packet type!")
+
 		}
 
 	}
+}
+
+func initSpawnPosition() {
+	for i := 0; i < 6; i++ {
+		spawnPosition = append(spawnPosition, position{-4, 1.75, float32(14 - i)})
+	}
+	for i := 0; i < 6; i++ {
+		spawnPosition = append(spawnPosition, position{-6, 1.75, float32(14 - i)})
+	}
+}
+
+func sendPlayerAllPositions(conn net.Conn, playerIndex int) {
+	for {
+		if playerIndex >= 0 && playerIndex <= len(playerList) && playerIndex+1 <= len(playerList) {
+			playersToSend := make([]player, len(playerList))
+			idexesCopied := copy(playersToSend, playerList)
+			if idexesCopied > 0 {
+				playersToSend = append(playersToSend[:playerIndex], playersToSend[+1:]...)
+				clientJSON, err := json.Marshal(playersToSend)
+				if err != nil {
+					log.Println("Cant marshal location")
+				}
+				clientJSON, err = encapsulatePacketID(PositionBroadcast, clientJSON)
+				if err != nil {
+					log.Println("Didn't encapsulate currUserJSON with ID")
+				}
+				conn.Write(stampPacketLength(clientJSON))
+			}
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+func encapsulatePacketID(ID int, JSON []byte) ([]byte, error) {
+	errorJSON, err := json.Marshal(packetType{ID, JSON})
+	return errorJSON, err
+}
+
+func stampPacketLength(data []byte) []byte {
+	packet := make([]byte, 0, 4+len(data))
+	packet = append(packet, []byte(fmt.Sprintf("%04d", len(data)))...)
+	packet = append(packet, data...)
+	return packet
 }
 
 func sendErrorMsg(conn net.Conn, msg string) {
@@ -165,14 +301,14 @@ func sendErrorMsg(conn net.Conn, msg string) {
 		log.Println("Error while Marshaling error msg!")
 		return
 	}
-	conn.Write([]byte(errorJSON))
+	conn.Write(stampPacketLength([]byte(errorJSON)))
 }
 
 func sendEveryoneData(data []byte, filter []string) {
 	for _, client := range playerList {
 		if !client.isInFilter(filter) {
 			log.Println("Sending data to everyone(Filtered) " + string(data))
-			client.connection.Write(data)
+			client.connection.Write(stampPacketLength(data))
 		}
 	}
 }
@@ -181,7 +317,7 @@ func genInitPlayerByData(data []byte, conn net.Conn) player {
 	var newPlayer player
 	err := json.Unmarshal(data, &newPlayer)
 	if err != nil {
-		log.Println("Couldnt parse json player data!")
+		log.Println("Cant parse json init player data!")
 	}
 
 	newPlayer.Color = -1        // Set the color to -1 as the player doesnt have a color yet
@@ -189,6 +325,8 @@ func genInitPlayerByData(data []byte, conn net.Conn) player {
 	if len(playerList) == 0 {
 		newPlayer.isManager = true // If he is the first one in the lobby, set the player to be the gae manager
 	}
+	newPlayer.index = len(playerList)
+	newPlayer.PlayerPosition = spawnPosition[newPlayer.index]
 
 	log.Println("newPlayer got generated", newPlayer)
 

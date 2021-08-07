@@ -7,6 +7,25 @@ import (
 	"strconv"
 )
 
+func listenTCP(host string, port int) {
+	tcpListener, err := net.Listen("tcp", host+":"+strconv.Itoa(port))
+	if err != nil {
+		log.Panicln(err)
+	}
+	log.Println("Listening to connections at " + tcpListener.Addr().String())
+	defer tcpListener.Close()
+
+	for {
+		tcpConnection, err := tcpListener.Accept()
+		if err != nil {
+			log.Println(err)
+			continue
+		}
+
+		go handleTcpPlayer(tcpConnection)
+	}
+}
+
 func handleTcpPlayer(conn net.Conn) {
 	log.Println("Accepted new connection.")
 	defer conn.Close()
@@ -66,7 +85,7 @@ func handleTcpPlayer(conn net.Conn) {
 			}
 			currUser.unduplicateUsername()
 
-			playerList = append(playerList, currUser) // Add the current user to the player list
+			playerList[currUser.id] = currUser // Add the current user to the player map
 
 			defer currUser.removePlayer()
 
@@ -108,50 +127,12 @@ func handleTcpPlayer(conn net.Conn) {
 			conn.Write([]byte(stampPacketLength(conenctedUsersJSON)))
 
 			// Tell the his ID
-			conenctedUsersJSON, err = encapsulatePacketID(UserId, []byte(strconv.FormatInt(currUser.id, 10)))
+			conenctedUsersJSON, err = encapsulatePacketID(UserId, []byte(strconv.FormatInt(int64(currUser.id), 10)))
 			if err != nil {
 				log.Println("Didn't encapsulate currUserJSON with ID")
 			}
 			conn.Write([]byte(stampPacketLength(conenctedUsersJSON)))
 
-			log.Println("Started position update thread")
-			go sendPlayerAllPositions(currUser.udpConnection, currUser.id)
-		case UpdatePos:
-			var newPosition position
-			data, err := packet.dataToBytes()
-			if err != nil {
-				log.Println("Cant turn inteface to []byte!")
-				return
-			}
-			err = json.Unmarshal(data, &newPosition)
-			if err != nil {
-				log.Println("Cant parse json init player data!")
-			}
-			playerList[currUser.id].PlayerPosition = newPosition
-		case UpdatePitch:
-			var pitch playerPitch
-			data, err := packet.dataToBytes()
-			if err != nil {
-				log.Println("Cant turn inteface to []byte!")
-				return
-			}
-			err = json.Unmarshal(data, &pitch)
-			if err != nil {
-				log.Println("Cant parse json init player data!")
-			}
-			playerList[currUser.id].Pitch = pitch.Pitch
-		case UpdateRotation:
-			var rotation playerRotation
-			data, err := packet.dataToBytes()
-			if err != nil {
-				log.Println("Cant turn inteface to []byte!")
-				return
-			}
-			err = json.Unmarshal(data, &rotation)
-			if err != nil {
-				log.Println("Cant parse json init player data!")
-			}
-			playerList[currUser.id].Rotation = rotation.Rotation
 		case StartGame:
 			var rotation playerRotation
 			data, err := packet.dataToBytes()

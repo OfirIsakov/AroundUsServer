@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bytes"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -29,34 +28,36 @@ The unity game client I built wont be released as I respect the developers of Am
 // Client side packets
 const (
 	InitUser       = iota + 1 // TCP
-	UpdatePos                 // UDP
-	UpdatePitch               // UDP
-	UpdateRotation            // UDP
 	KilledPlayer              // TCP
 	GameInit                  // TCP
 	StartGame                 // TCP
+	UpdatePos                 // UDP
+	UpdatePitch               // UDP
+	UpdateRotation            // UDP
+	UdpDial                   // UDP
 )
 
-// Server sside packets
+// Server side packets
 const (
 	UsersInGame         = iota + 1 // TCP
 	IsUserManager                  // TCP
 	NewPlayerConnected             // TCP
-	PositionBroadcast              // UDP
 	ClientSpawnPosition            // TCP
 	UserDisconnected               // TCP
 	GameOver                       // TCP
 	PlayerDied                     // TCP
 	UserId                         // TCP
+	PositionBroadcast              // UDP
 )
 
 // Global vars
-var playerList = make([]player, 0)
+var playerList = make(map[int]player, 10)
 var spawnPosition = make([]position, 0)
 var tasksDone = 0
 var isInLobby = true
-var currId int64
-var removeLock sync.Mutex
+var currId int
+var players int
+var criticalUseLock sync.Mutex
 
 // Structs
 type packetType struct {
@@ -91,53 +92,40 @@ type playerRotation struct {
 }
 
 type player struct {
-	Name           string      // The name of the player, can contain anything
-	Color          int8        // The index of the color in the color list held in the client
-	isManager      bool        // Whether the player is the game manager or not, he can start the game
-	IsImposter     bool        // Sent on the round start to tell the client if hes an imposter or crew
-	InVent         bool        // If true the server shouldnt send the player locations until hes leaving the vent
-	IsDead         bool        // If the player is dead the server shouldnt send his location
-	GotReported    bool        // If the player didnt get reported yet tell the client to show a body on the ground
-	PlayerPosition position    // The position of the player in Unity world cordinates
-	Pitch          float32     // Should be -90 <= pitch <= 90, represents the head pitch(Up and down)
-	Rotation       float32     // Should be 0 <= rotation <= 360, represents the body rotation
-	id             int64       // Id of the player
-	tcpConnection  net.Conn    // The player TCP connection socket
-	udpConnection  net.UDPConn // The player UDP connection socket
+	Name           string       // The name of the player, can contain anything
+	Color          int8         // The index of the color in the color list held in the client
+	isManager      bool         // Whether the player is the game manager or not, he can start the game
+	IsImposter     bool         // Sent on the round start to tell the client if hes an imposter or crew
+	InVent         bool         // If true the server shouldnt send the player locations until hes leaving the vent
+	IsDead         bool         // If the player is dead the server shouldnt send his location
+	GotReported    bool         // If the player didnt get reported yet tell the client to show a body on the ground
+	PlayerPosition position     // The position of the player in Unity world cordinates
+	Pitch          float32      // Should be -90 <= pitch <= 90, represents the head pitch(Up and down)
+	Rotation       float32      // Should be 0 <= rotation <= 360, represents the body rotation
+	id             int          // Id of the player
+	tcpConnection  net.Conn     // The player TCP connection socket
+	udpAddress     *net.UDPAddr // The player UDP address socket
 }
 
 func main() {
 	var host = flag.String("ip", "127.0.0.1", "Server local IP")
-	var port = flag.Int("port", 27403, "Server port")
+	var tcpPort = flag.Int("tcp", 27403, "Server port")
+	var udpPort = flag.Int("tcp", 27402, "Server port")
 	flag.Parse()
-	tcpListener, err := net.Listen("tcp", *host+":"+strconv.Itoa(*port))
-	if err != nil {
-		log.Panicln(err)
-	}
-	log.Println("Listening to connections at " + tcpListener.Addr().String())
-	defer tcpListener.Close()
 
 	initSpawnPosition()
 	go consoleCommands()
-	for {
-		tcpConnection, err := tcpListener.Accept()
-		if err != nil {
-			log.Println(err)
-			continue
-		}
-
-		go handleTcpPlayer(tcpConnection)
-	}
+	go listenTCP(*host, *tcpPort)
+	go listenUDP(*host, *udpPort)
 }
 
 func (packet packetType) dataToBytes() ([]byte, error) {
-	var buf bytes.Buffer
-	enc := json.NewEncoder(&buf)
-	err := enc.Encode(packet.Data)
-	if err != nil {
-		return nil, err
+	buf, ok := packet.Data.([]byte)
+	if !ok {
+		return nil, fmt.Errorf("Bruh, not bytes here")
 	}
-	return buf.Bytes(), nil
+
+	return buf, nil
 }
 
 func (p player) isInFilter(filter []string) bool {
@@ -151,61 +139,63 @@ func (p player) isInFilter(filter []string) bool {
 
 func (p player) unduplicateUsername() {
 	var nextNumber int8
-	for i := 0; i < len(playerList); i++ {
-		if playerList[i].Name == p.Name {
-			i = 0
-			nextNumber++
+	wasDuped := true
+	criticalUseLock.Lock()
+	for wasDuped {
+		wasDuped = false
+		for _, player := range playerList {
+			if player.Name == p.Name {
+				nextNumber++
+				wasDuped = true
+				break
+			}
 		}
 	}
+	criticalUseLock.Unlock()
 	if nextNumber != 0 {
 		p.Name = p.Name + strconv.Itoa(int(nextNumber))
 	}
 }
 
 func (p player) removePlayer() {
-	for i := 0; i < len(playerList); i++ {
-		if playerList[i].id == p.id {
+	criticalUseLock.Lock()
+	delete(playerList, p.id)
+	criticalUseLock.Unlock()
 
-			removeLock.Lock()
-			playerList = append(playerList[:i], playerList[i:]...)
-			removeLock.Unlock()
-
-			currUserJSON, err := json.Marshal(p) // Get all the players before adding the current user
-			if err != nil {
-				sendErrorMsg(p.tcpConnection, "Error while Marshaling the user for remove, brotha tell Ofir!")
-				return
-			}
-
-			currUserJSON, err = encapsulatePacketID(UserDisconnected, currUserJSON)
-			if err != nil {
-				log.Println("Didn't encapsulate currUserJSON with ID")
-				return
-			}
-			sendEveryoneTcpData([]byte(currUserJSON), []string{p.Name})
-		}
+	currUserJSON, err := json.Marshal(p) // Get all the players before adding the current user
+	if err != nil {
+		sendErrorMsg(p.tcpConnection, "Error while Marshaling the user for remove, brotha tell ofido!")
+		return
 	}
+
+	currUserJSON, err = encapsulatePacketID(UserDisconnected, currUserJSON)
+	if err != nil {
+		log.Println("Didn't encapsulate currUserJSON with ID")
+		return
+	}
+	sendEveryoneTcpData([]byte(currUserJSON), []string{p.Name})
 }
 
 func consoleCommands() {
 	for {
 		var command string
 		fmt.Scanln(&command)
-		commands := strings.Split(command, " ")
-		switch {
-		case commands[0] == "help":
-			log.Println("help")
-			log.Println("list")
-			log.Println("dc [number]")
-		case commands[0] == "list" || commands[0] == "ls":
-			for i, client := range playerList {
-				log.Println(fmt.Sprintf("%v) %v", i, client))
+		commands := strings.Split(strings.Trim("\n\t /\\'\""), " ")
+		switch commands[0] {
+		case "help", "h":
+			log.Println("help(h)")
+			log.Println("list(ls)")
+			log.Println("disconnet(dc) [id]")
+		case "list", "ls":
+			for id, player := range playerList {
+				log.Println(fmt.Sprintf("%v) %v", id, player))
 			}
-		case commands[0] == "dc":
-			position, err := strconv.Atoi(commands[1])
+		case "disconnet", "dc":
+			id, err := strconv.Atoi(commands[1])
 			if err != nil {
 				log.Println("Cant convert to number position")
 			}
-			playerList[position].tcpConnection.Close()
+			playerList[id].tcpConnection.Close()
 		default:
 			log.Println("Unknown command")
 		}
@@ -231,4 +221,13 @@ func stampPacketLength(data []byte) []byte {
 	packet = append(packet, []byte(fmt.Sprintf("%04d", len(data)))...)
 	packet = append(packet, data...)
 	return packet
+}
+
+func getBytes(key interface{}) ([]byte, error) {
+	buf, ok := key.([]byte)
+	if !ok {
+		return nil, fmt.Errorf("Bruh, not bytes here")
+	}
+
+	return buf, nil
 }

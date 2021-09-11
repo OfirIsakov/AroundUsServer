@@ -74,9 +74,7 @@ func getIncomingUdp(conn *net.UDPConn, quit chan struct{}) {
 }
 
 func handleIncomingUdpData() {
-	var err error = nil
-
-	for err == nil {
+	for {
 		data, err := queue.DequeueOrWaitForNextElement()
 		if err != nil {
 			log.Println("Couldn't dequeue!")
@@ -90,14 +88,14 @@ func handleIncomingUdpData() {
 		}
 
 		// Get the packet ID from the JSON
-		var dataPacket packet.PacketType
+		var dataPacket packet.ClientPacket
 		err = json.Unmarshal(bytesData, &dataPacket)
 		if err != nil {
 			log.Println("Couldn't parse json player data! Skipping iteration!")
 			continue
 		}
 
-		log.Println("from", dataPacket.ID, ":", dataPacket.Data)
+		log.Println("from", dataPacket.PlayerID, ":", dataPacket.Data)
 		err = handleUdpData(dataPacket)
 		if err != nil {
 			log.Println("Error while handling UDP packet: " + err.Error())
@@ -106,7 +104,7 @@ func handleIncomingUdpData() {
 	}
 }
 
-func handleUdpData(dataPacket packet.PacketType) error {
+func handleUdpData(dataPacket packet.ClientPacket) error {
 	data, err := dataPacket.DataToBytes()
 	if err != nil {
 		return fmt.Errorf("cant turn inteface to []byte")
@@ -119,14 +117,14 @@ func handleUdpData(dataPacket packet.PacketType) error {
 		if err != nil {
 			return fmt.Errorf("cant parse position player data")
 		}
-		globals.PlayerList[dataPacket.ID].PlayerPosition = newPosition
+		globals.PlayerList[dataPacket.PlayerID].PlayerPosition = newPosition
 	case packet.UpdateRotation:
 		var newRotation player.PlayerRotation
 		err = json.Unmarshal(data, &newRotation)
 		if err != nil {
 			return fmt.Errorf("cant parse rotation player data")
 		}
-		globals.PlayerList[dataPacket.ID].Rotation = newRotation
+		globals.PlayerList[dataPacket.PlayerID].Rotation = newRotation
 	default:
 		// sendErrorMsg(tcpConn, "Invalid packet type!")
 

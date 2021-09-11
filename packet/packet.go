@@ -26,25 +26,26 @@ const (
 	PositionBroadcast              // UDP
 )
 
-type PacketType struct {
-	ID   int
-	Type int8
-	Data interface{}
+type ClientPacket struct {
+	PlayerID int         `json:"playerID"`
+	Type     int8        `json:"type"`
+	Data     interface{} `json:"data"`
 }
 
-type PacketError struct {
-	Msg string
+type ServerPacket struct {
+	Type int8        `json:"type"`
+	Data interface{} `json:"data"`
 }
 
 type GameInitData struct {
-	Imposters    []string
-	TaskCount    uint8
-	PlayerSpeed  uint8
-	KillCooldown uint8
-	Emergencies  uint8
+	Imposters    []string `json:"imposters"`
+	TaskCount    uint8    `json:"taskCount"`
+	PlayerSpeed  uint8    `json:"playerSpeed"`
+	KillCooldown uint8    `json:"killCooldown"`
+	Emergencies  uint8    `json:"emergencies"`
 }
 
-func (dataPacket *PacketType) DataToBytes() ([]byte, error) {
+func (dataPacket *ClientPacket) DataToBytes() ([]byte, error) {
 	buf, err := helpers.GetBytes(dataPacket.Data)
 	return buf, err
 }

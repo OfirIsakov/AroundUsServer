@@ -1,6 +1,7 @@
 package tcp
 
 import (
+	"aroundUsServer/globals"
 	"aroundUsServer/packet"
 	"encoding/json"
 	"log"
@@ -32,9 +33,9 @@ func handleTcpPlayer(conn net.Conn) {
 	defer conn.Close()
 	defer log.Println("Closed connection.")
 
-	// if !globals.IsInLobby {
-	// 	sendErrorMsg(conn, "Game has already started!")
-	// }
+	if !globals.IsInLobby {
+		sendErrorMsg(conn, "Game has already started!")
+	}
 
 	// var currUser player.Player
 
@@ -63,7 +64,7 @@ func handleTcpPlayer(conn net.Conn) {
 		data = buf[:size]
 
 		// Get the packet ID from the JSON
-		var dataPacket packet.PacketType
+		var dataPacket packet.ClientPacket
 		err = json.Unmarshal(data, &dataPacket)
 		if err != nil {
 			log.Println("Couldn't parse json player data! Skipping iteration!")
@@ -184,12 +185,12 @@ func handleTcpPlayer(conn net.Conn) {
 // 	}
 // }
 
-// func sendErrorMsg(conn net.Conn, msg string) {
-// 	log.Println(msg)
-// 	errorJSON, err := json.Marshal(packetError{msg})
-// 	if err != nil {
-// 		log.Println("Error while Marshaling error msg!")
-// 		return
-// 	}
-// 	conn.Write(stampPacketLength([]byte(errorJSON)))
-// }
+func sendErrorMsg(conn net.Conn, msg string) {
+	log.Println(msg)
+	errorJSON, err := json.Marshal(packet.ServerPacket{Type: packet.Error, Data: msg})
+	if err != nil {
+		log.Println("Error while Marshaling error msg!")
+		return
+	}
+	conn.Write(errorJSON)
+}

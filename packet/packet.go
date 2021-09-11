@@ -2,19 +2,17 @@ package packet
 
 import helpers "aroundUsServer/utils"
 
-// Client side packets
+// Client -> Server packets
 const (
 	InitUser       = iota + 1 // TCP
 	KilledPlayer              // TCP
 	GameInit                  // TCP
 	StartGame                 // TCP
 	UpdatePos                 // UDP
-	UpdatePitch               // UDP
 	UpdateRotation            // UDP
-	UdpDial                   // UDP
 )
 
-// Server side packets
+// Server -> Client packets
 const (
 	UsersInGame         = iota + 1 // TCP
 	IsUserManager                  // TCP
@@ -24,11 +22,13 @@ const (
 	GameOver                       // TCP
 	PlayerDied                     // TCP
 	UserId                         // TCP
+	Error                          // TCP
 	PositionBroadcast              // UDP
 )
 
 type PacketType struct {
 	ID   int
+	Type int8
 	Data interface{}
 }
 
@@ -44,7 +44,7 @@ type GameInitData struct {
 	Emergencies  uint8
 }
 
-func (dataPacket PacketType) DataToBytes() ([]byte, error) {
+func (dataPacket *PacketType) DataToBytes() ([]byte, error) {
 	buf, err := helpers.GetBytes(dataPacket.Data)
 	return buf, err
 }

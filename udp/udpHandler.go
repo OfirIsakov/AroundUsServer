@@ -2,18 +2,16 @@ package udp
 
 import (
 	"aroundUsServer/globals"
+	"aroundUsServer/packet"
+	"aroundUsServer/player"
 	helpers "aroundUsServer/utils"
 	"encoding/json"
+	"fmt"
 	"log"
 	"net"
 
 	"github.com/enriquebris/goconcurrentqueue"
 )
-
-type PacketData struct {
-	ID   int
-	Data string
-}
 
 var queue *goconcurrentqueue.FIFO
 
@@ -55,18 +53,18 @@ func ListenUDP(host string, port int) {
 }
 
 func getIncomingUdp(conn *net.UDPConn, quit chan struct{}) {
-	var buf []byte
+	var buffer []byte
 	err := error(nil)
 
 	for err == nil {
-		buf = make([]byte, 1024)
+		buffer = make([]byte, 1024)
 
-		size, _, err := conn.ReadFromUDP(buf)
+		size, _, err := conn.ReadFromUDP(buffer)
 		if err != nil {
 			log.Println("Cant read packet!", err)
 			continue
 		}
-		data := buf[:size]
+		data := buffer[:size]
 
 		queue.Enqueue(data)
 	}
@@ -92,95 +90,47 @@ func handleIncomingUdpData() {
 		}
 
 		// Get the packet ID from the JSON
-		var packet PacketData
-		err = json.Unmarshal(bytesData, &packet)
+		var dataPacket packet.PacketType
+		err = json.Unmarshal(bytesData, &dataPacket)
 		if err != nil {
 			log.Println("Couldn't parse json player data! Skipping iteration!")
 			continue
 		}
 
-		log.Println("from", packet.ID, ":", packet.Data)
+		log.Println("from", dataPacket.ID, ":", dataPacket.Data)
+		err = handleUdpData(dataPacket)
+		if err != nil {
+			log.Println("Error while handling UDP packet: " + err.Error())
+			continue
+		}
 	}
 }
 
-// func handleUdpData(conn net.UDPConn) {
-// 	log.Println("Accepted new connection.")
-// 	defer conn.Close()
-// 	defer log.Println("Closed connection.")
+func handleUdpData(dataPacket packet.PacketType) error {
+	data, err := dataPacket.DataToBytes()
+	if err != nil {
+		return fmt.Errorf("cant turn inteface to []byte")
+	}
 
-// 	for {
-// 		// Read the first 4 bytes and see the packet length
-// 		buf := make([]byte, 4)
-// 		size, err := conn.Read(buf)
-// 		if err != nil {
-// 			log.Println("Cant read first 4 bytes!")
-// 			err = nil
-// 			return
-// 		}
-// 		data := buf[:size]
-// 		readLength, err := strconv.Atoi(string(data))
-// 		if err != nil {
-// 			log.Println("Cant convent string size to int!")
-// 			return
-// 		}
+	switch dataPacket.Type {
+	case packet.UpdatePos:
+		var newPosition player.PlayerPosition
+		err = json.Unmarshal(data, &newPosition)
+		if err != nil {
+			return fmt.Errorf("cant parse position player data")
+		}
+		globals.PlayerList[dataPacket.ID].PlayerPosition = newPosition
+	case packet.UpdateRotation:
+		var newRotation player.PlayerRotation
+		err = json.Unmarshal(data, &newRotation)
+		if err != nil {
+			return fmt.Errorf("cant parse rotation player data")
+		}
+		globals.PlayerList[dataPacket.ID].Rotation = newRotation
+	default:
+		// sendErrorMsg(tcpConn, "Invalid packet type!")
 
-// 		buf = make([]byte, readLength)
-// 		size, err = conn.Read(buf)
-// 		if err != nil {
-// 			log.Println("Cant read the rest of the packet!")
-// 			return
-// 		}
-// 		data = buf[:size]
+	}
 
-// 		// Get the packet ID from the JSON
-// 		var packet packetType
-// 		err = json.Unmarshal(data, &packet)
-// 		if err != nil {
-// 			log.Println("Couldn't parse json player data! Skipping iteration!")
-// 			continue
-// 		}
-
-// 		switch packet.ID {
-// 		case UpdatePos:
-// 			var newPosition position
-// 			data, err := packet.dataToBytes()
-// 			if err != nil {
-// 				log.Println("Cant turn inteface to []byte!")
-// 				return
-// 			}
-// 			err = json.Unmarshal(data, &newPosition)
-// 			if err != nil {
-// 				log.Println("Cant parse json init player data!")
-// 			}
-// 			playerList[currUser.id].PlayerPosition = newPosition
-// 		case UpdatePitch:
-// 			var pitch playerPitch
-// 			data, err := packet.dataToBytes()
-// 			if err != nil {
-// 				log.Println("Cant turn inteface to []byte!")
-// 				return
-// 			}
-// 			err = json.Unmarshal(data, &pitch)
-// 			if err != nil {
-// 				log.Println("Cant parse json init player data!")
-// 			}
-// 			playerList[currUser.id].Pitch = pitch.Pitch
-// 		case UpdateRotation:
-// 			var rotation playerRotation
-// 			data, err := packet.dataToBytes()
-// 			if err != nil {
-// 				log.Println("Cant turn inteface to []byte!")
-// 				return
-// 			}
-// 			err = json.Unmarshal(data, &rotation)
-// 			if err != nil {
-// 				log.Println("Cant parse json init player data!")
-// 			}
-// 			playerList[currUser.id].Rotation = rotation.Rotation
-// 		default:
-// 			sendErrorMsg(tcpConn, "Invalid packet type!")
-
-// 		}
-
-// 	}
-// }
+	return nil
+}

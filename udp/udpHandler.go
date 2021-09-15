@@ -4,6 +4,7 @@ import (
 	"aroundUsServer/globals"
 	"aroundUsServer/packet"
 	"aroundUsServer/player"
+	"aroundUsServer/tcp"
 	helpers "aroundUsServer/utils"
 	"encoding/json"
 	"fmt"
@@ -13,19 +14,19 @@ import (
 	"github.com/enriquebris/goconcurrentqueue"
 )
 
-var queue *goconcurrentqueue.FIFO
+var packetsQueue *goconcurrentqueue.FIFO
 
 func ListenUDP(host string, port int) {
 	log.Println("Starting UDP listening")
 
-	queue = goconcurrentqueue.NewFIFO()
+	packetsQueue = goconcurrentqueue.NewFIFO()
 
 	//Basic variables
-	adreesss := "127.0.0.1:8080"
+	addresss := fmt.Sprintf("%s:%d", host, port)
 	protocol := "udp"
 
 	//Build the address
-	udpAddr, err := net.ResolveUDPAddr(protocol, adreesss)
+	udpAddr, err := net.ResolveUDPAddr(protocol, addresss)
 	if err != nil {
 		log.Println("Wrong Address")
 		return
@@ -53,11 +54,10 @@ func ListenUDP(host string, port int) {
 }
 
 func getIncomingUdp(conn *net.UDPConn, quit chan struct{}) {
-	var buffer []byte
 	err := error(nil)
 
 	for err == nil {
-		buffer = make([]byte, 1024)
+		buffer := make([]byte, 1024)
 
 		size, _, err := conn.ReadFromUDP(buffer)
 		if err != nil {
@@ -66,7 +66,7 @@ func getIncomingUdp(conn *net.UDPConn, quit chan struct{}) {
 		}
 		data := buffer[:size]
 
-		queue.Enqueue(data)
+		packetsQueue.Enqueue(data)
 	}
 
 	log.Println("Listener failed - restarting!", err)
@@ -75,7 +75,7 @@ func getIncomingUdp(conn *net.UDPConn, quit chan struct{}) {
 
 func handleIncomingUdpData() {
 	for {
-		data, err := queue.DequeueOrWaitForNextElement()
+		data, err := packetsQueue.DequeueOrWaitForNextElement()
 		if err != nil {
 			log.Println("Couldn't dequeue!")
 			continue
@@ -126,7 +126,7 @@ func handleUdpData(dataPacket packet.ClientPacket) error {
 		}
 		globals.PlayerList[dataPacket.PlayerID].Rotation = newRotation
 	default:
-		// sendErrorMsg(tcpConn, "Invalid packet type!")
+		tcp.SendErrorMsg(globals.PlayerList[dataPacket.PlayerID].TcpConnection, "Invalid packet type!")
 
 	}
 

@@ -1,12 +1,16 @@
 package helpers
 
-import "fmt"
+import (
+	"bytes"
+	"encoding/gob"
+)
 
 func GetBytes(key interface{}) ([]byte, error) {
-	buf, ok := key.([]byte)
-	if !ok {
-		return nil, fmt.Errorf("bruh, not bytes here")
+	var buf bytes.Buffer
+	enc := gob.NewEncoder(&buf)
+	err := enc.Encode(key)
+	if err != nil {
+		return nil, err
 	}
-
-	return buf, nil
+	return buf.Bytes(), nil
 }

@@ -7,6 +7,7 @@ import (
 	"aroundUsServer/tcp"
 	"aroundUsServer/udp"
 	"flag"
+	"log"
 )
 
 /*
@@ -27,6 +28,8 @@ func main() {
 	var host = flag.String("ip", "127.0.0.1", "Server local IP")
 	var port = flag.Int("port", 27403, "Server port")
 	flag.Parse()
+
+	log.Printf("Starting listening on: %s:%d", *host, port)
 
 	// start listening
 	go tcp.ListenTCP(*host, *port)
@@ -85,9 +88,9 @@ func main() {
 // }
 
 func initSpawnPosition() {
-	for i := 0; i < 6; i++ {
-		globals.SpawnPosition = append(globals.SpawnPosition, player.PlayerPosition{X: -4, Y: 1.75, Z: float32(14 - i)})
-		globals.SpawnPosition = append(globals.SpawnPosition, player.PlayerPosition{X: -6, Y: 1.75, Z: float32(14 - i)})
+	for i := 5; i <= 0; i++ {
+		globals.SpawnPositionsStack = append(globals.SpawnPositionsStack, player.PlayerPosition{X: -4, Y: 1.75, Z: float32(14 - i)})
+		globals.SpawnPositionsStack = append(globals.SpawnPositionsStack, player.PlayerPosition{X: -6, Y: 1.75, Z: float32(14 - i)})
 	}
 }
 

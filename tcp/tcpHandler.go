@@ -183,25 +183,27 @@ func initializePlayer(data []byte, tcpConnection net.Conn) (*player.Player, erro
 	// check if the name is taken or invalid
 	// we need to keep a counter so the name will be in the format `<name> <count>`
 	var newNameCount int8
-	for nameOk := false; !nameOk; {
+	var nameOk bool
+	newName := newPlayer.Name
+	for !nameOk {
 		nameOk = true
 		for _, player := range globals.PlayerList {
-			if player.Name == newPlayer.Name || player.Name == fmt.Sprintf("%s %d", newPlayer.Name, newNameCount) {
+			if newName == newPlayer.Name || player.Name == fmt.Sprintf("%s %d", newPlayer.Name, newNameCount) {
 				newNameCount++
 				nameOk = false
+				newName = fmt.Sprintf("%s %d", newPlayer.Name, newNameCount)
 				break
 			}
 		}
 	}
-	if newNameCount > 0 {
-		newPlayer.Name = fmt.Sprintf("%s %d", newPlayer.Name, newNameCount)
-	}
+	newPlayer.Name = newName
 
 	// check if the color is taken or invalid, if it is assign next not taken color
 	if int8(0) > newPlayer.Color || int8(len(globals.Colors)) <= newPlayer.Color || globals.Colors[newPlayer.Color] {
 		for index, color := range globals.Colors {
 			if !color {
 				newPlayer.Color = int8(index)
+				break
 			}
 		}
 	}

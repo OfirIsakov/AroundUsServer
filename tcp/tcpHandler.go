@@ -4,16 +4,14 @@ import (
 	"aroundUsServer/globals"
 	"aroundUsServer/packet"
 	"aroundUsServer/player"
+	helpers "aroundUsServer/utils"
 	"encoding/json"
 	"fmt"
 	"log"
 	"net"
 	"strconv"
 	"strings"
-	"sync"
 )
-
-var initializePlayerLock sync.Mutex
 
 func ListenTCP(host string, port int) {
 	tcpListener, err := net.Listen("tcp", host+":"+strconv.Itoa(port))
@@ -55,25 +53,33 @@ func handleTcpPlayer(conn net.Conn) {
 			log.Println(string(buf))
 			return
 		}
-		data := []byte(strings.TrimSpace(string(buf[:size])))
+		rawStreamData := []byte(strings.TrimSpace(string(buf[:size])))
 
-		log.Println(string(data))
+		log.Println(string(rawStreamData))
 
 		// Get the packet ID from the JSON
 		var clientPacket packet.ClientPacket
-		err = json.Unmarshal(data, &clientPacket)
+		err = json.Unmarshal(rawStreamData, &clientPacket)
 		if err != nil {
-			log.Println("Couldn't parse json player data! Skipping iteration!")
+			log.Println("Couldn't parse json player data! Skipping iteration! " + err.Error())
 			continue
 		}
+
+		// packetData := []byte(clientPacket.Data)
+		// packetData, ok :=  fmt.Sprint(data)
+		// log.Println(packetData)
+		// if !ok {
+		// 	log.Println("Couldn't turn data to []byte! Skipping iteration! ")
+		// 	continue
+		// }
 
 		jsonString, err := json.Marshal(clientPacket.Data)
 		if err != nil {
 			SendErrorMsg(conn, "Cant turn inteface to json!\n"+err.Error())
 			continue
 		}
-
 		packetData := []byte(jsonString)
+
 		// packetData, err := clientPacket.DataToBytes()
 		// if err != nil {
 		// 	log.Println("Cant turn inteface to []byte!")
@@ -83,15 +89,18 @@ func handleTcpPlayer(conn net.Conn) {
 
 		switch clientPacket.Type {
 		case packet.InitUser: // example: {"type":1, "data":{"name":"bro", "color": 1}}
-			initializePlayerLock.Lock()
-
-			currUser, err = initializePlayer(packetData, conn)
+			currUser, err = initializePlayer([]byte(packetData), conn)
 			if err != nil {
 				SendErrorMsg(conn, "error while making a user: "+err.Error())
 				return
 			}
 
-			initializePlayerLock.Unlock()
+			defer deInitializePlayer(currUser)
+
+			//TODO: defer notify all that player left
+
+			//TODO: notify player about all players in lobby
+			//TODO: notify all that player joined
 
 			globals.PlayerList[currUser.Id] = currUser
 
@@ -171,6 +180,9 @@ func handleTcpPlayer(conn net.Conn) {
 }
 
 func initializePlayer(data []byte, tcpConnection net.Conn) (*player.Player, error) {
+	globals.PlayerListLock.Lock()
+	defer globals.PlayerListLock.Unlock()
+
 	var newPlayer *player.Player
 	err := json.Unmarshal(data, &newPlayer)
 	if err != nil {
@@ -228,21 +240,46 @@ func initializePlayer(data []byte, tcpConnection net.Conn) (*player.Player, erro
 	return newPlayer, nil
 }
 
+func deInitializePlayer(playerToDelete *player.Player) error {
+	globals.PlayerListLock.Lock()
+	defer globals.PlayerListLock.Unlock()
+
+	delete(globals.PlayerList, playerToDelete.Id)
+
+	// give another player the manager
+	if playerToDelete.IsManager {
+		for _, nextPlayer := range globals.PlayerList {
+			nextPlayer.IsManager = true
+			break
+		}
+	}
+
+	// free the color
+	globals.Colors[playerToDelete.Color] = false
+
+	playerToDelete = nil
+
+	return nil
+}
+
 func SendErrorMsg(conn net.Conn, msg string) error {
 	log.Println(msg)
-	errorJSON, err := json.Marshal(packet.ServerPacket{Type: packet.Error, Data: msg})
-	if err != nil {
-		return fmt.Errorf("error while marshaling error msg")
-	}
-	_, err = conn.Write(errorJSON)
+	errorPacket := packet.StampPacket([]byte(msg), packet.Error)
+	_, err := errorPacket.SendTcpStream(conn)
 	return err
 }
 
-// func sendEveryoneTcpData(data []byte, filter []string) {
-// 	for _, client := range playerList {
-// 		if !client.isInFilter(filter) {
-// 			log.Println("Sending data to everyone(Filtered) " + string(data))
-// 			client.tcpConnection.Write(stampPacketLength(data))
-// 		}
-// 	}
-// }
+// function wont send the message for players in the filter
+func BroadcastTCP(data []byte, packetType int8, userFilter []int) error {
+	for _, user := range globals.PlayerList {
+		if !helpers.IntInArray(user.Id, userFilter) {
+			log.Println("Sending data to everyone(Filtered) " + string(data))
+			packetToSend := packet.StampPacket(data, packetType)
+			_, err := packetToSend.SendTcpStream(user.TcpConnection)
+			if err != nil {
+				log.Println(err)
+			}
+		}
+	}
+	return nil
+}

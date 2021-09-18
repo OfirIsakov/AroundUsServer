@@ -13,11 +13,11 @@ import (
 /*
 ** DISCLAIMER! **
 This server is not designed to check the users inputs!
-This server is quick and dirty to be able to play with friends a game and most calculations
+This server is ~quick~ and dirty to be able to play with friends a game and most calculations
 get calculated in the client so the server is highly trusting the clients.
 Its not designed to be released to the wild and shouldn't be trusted with random users.
-If you use this server in the wild cheating will be SO ez.
-The unity game client I built wont be released as I respect the developers of Among Us.
+If you use this server in the wild, cheating & crashing will be SO ez.
+The unity game client I built wont be released as I respect the developers of "Among Us".
 */
 
 func main() {
@@ -25,11 +25,11 @@ func main() {
 	initSpawnPosition()
 
 	// get program flags
-	var host = flag.String("ip", "127.0.0.1", "Server local IP")
-	var port = flag.Int("port", 27403, "Server port")
+	var host = flag.String("ip", "127.0.0.1", "Server listen IP")
+	var port = flag.Int("port", 27403, "Server listen port")
 	flag.Parse()
 
-	log.Printf("Starting listening on: %s:%d", *host, port)
+	log.Printf("Starting listening on: %s:%d", *host, *port)
 
 	// start listening
 	go tcp.ListenTCP(*host, *port)

@@ -1,6 +1,11 @@
 package packet
 
-import helpers "aroundUsServer/utils"
+import (
+	helpers "aroundUsServer/utils"
+	"encoding/json"
+	"fmt"
+	"net"
+)
 
 // Client -> Server packets
 const (
@@ -8,6 +13,7 @@ const (
 	KilledPlayer              // TCP
 	GameInit                  // TCP
 	StartGame                 // TCP
+	DialAddr                  // UDP
 	UpdatePos                 // UDP
 	UpdateRotation            // UDP
 )
@@ -48,4 +54,16 @@ type GameInitData struct {
 func (dataPacket *ClientPacket) DataToBytes() ([]byte, error) {
 	buf, err := helpers.GetBytes(dataPacket.Data)
 	return buf, err
+}
+
+func StampPacket(data []byte, packetType int8) ServerPacket {
+	return ServerPacket{Type: packetType, Data: data}
+}
+
+func (packet *ServerPacket) SendTcpStream(tcpConnection net.Conn) (int, error) {
+	packetJson, err := json.Marshal(*packet)
+	if err != nil {
+		return 0, fmt.Errorf("error while marshaling packet")
+	}
+	return tcpConnection.Write([]byte(packetJson))
 }

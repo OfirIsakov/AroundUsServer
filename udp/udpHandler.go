@@ -99,7 +99,6 @@ func handleIncomingUdpData() {
 			continue
 		}
 
-		log.Println("from", dataPacket.PlayerID, ":", dataPacket.Data)
 		err = handleUdpData(dequeuedPacket.Address, dataPacket)
 		if err != nil {
 			log.Println("Error while handling UDP packet: " + err.Error())
@@ -109,22 +108,25 @@ func handleIncomingUdpData() {
 }
 
 func handleUdpData(userAddress *net.UDPAddr, clientPacket packet.ClientPacket) error {
+	if clientPacket.Type == packet.DialAddr { // {"type":5, "id": 0}
+		globals.PlayerList[clientPacket.PlayerID].UdpAddress = userAddress
+		return nil
+	}
+
 	dataPacket, err := clientPacket.DataToBytes()
 	if err != nil {
 		return err
 	}
+
 	switch clientPacket.Type {
-	case packet.DialAddr:
-		//TODO here we want to save the player addr
-		return nil
-	case packet.UpdatePos:
+	case packet.UpdatePos: // {"type":6, "id": 0, "data":{"x":0, "y":2, "z":69}}
 		var newPosition player.PlayerPosition
 		err := json.Unmarshal([]byte(dataPacket), &newPosition)
 		if err != nil {
 			return fmt.Errorf("cant parse position player data")
 		}
 		globals.PlayerList[clientPacket.PlayerID].PlayerPosition = newPosition
-	case packet.UpdateRotation:
+	case packet.UpdateRotation: // {"type":7, "id": 0, "data":{"pitch":42, "yaw":11}}
 		var newRotation player.PlayerRotation
 		err := json.Unmarshal([]byte(dataPacket), &newRotation)
 		if err != nil {

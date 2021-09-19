@@ -1,7 +1,6 @@
 package packet
 
 import (
-	helpers "aroundUsServer/utils"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -33,9 +32,9 @@ const (
 )
 
 type ClientPacket struct {
-	PlayerID int         `json:"playerID"`
-	Type     int8        `json:"type"`
-	Data     interface{} `json:"data"`
+	PlayerID int                    `json:"playerID"`
+	Type     int8                   `json:"type"`
+	Data     map[string]interface{} `json:"data"`
 }
 
 type ServerPacket struct {
@@ -52,8 +51,12 @@ type GameInitData struct {
 }
 
 func (dataPacket *ClientPacket) DataToBytes() ([]byte, error) {
-	buf, err := helpers.GetBytes(dataPacket.Data)
-	return buf, err
+	// buf, err := helpers.GetBytes(dataPacket.Data)
+	jsonString, err := json.Marshal(dataPacket.Data)
+	if err != nil {
+		return nil, fmt.Errorf("error while turning packet data to bytes")
+	}
+	return []byte(jsonString), nil
 }
 
 func StampPacket(data []byte, packetType int8) ServerPacket {

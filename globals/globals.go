@@ -15,6 +15,6 @@ var ImpostorsAlive = 0                                      // how many impostor
 var CrewAlive = 0                                           // how many crew are left
 var IsInLobby = true                                        // whether the game started or not
 var CurrId int                                              // the next player id when joining
-var QueueReaders int                                        // amount of UDP queue reader threads
+var QueueReaders int = 5                                    // amount of UDP queue reader threads
 
 // var LobbyPositions = make([]player.PlayerPosition, 0) // holds where the players spawn when joining the lobby

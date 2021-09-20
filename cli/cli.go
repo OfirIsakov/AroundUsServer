@@ -2,6 +2,7 @@ package cli
 
 import (
 	"aroundUsServer/globals"
+	"aroundUsServer/utils"
 	"fmt"
 	"log"
 	"strconv"
@@ -19,8 +20,8 @@ func ConsoleCLI() {
 			log.Println("list(ls)")
 			log.Println("disconnet(dc) [id]")
 		case "list", "ls":
-			for id, player := range globals.PlayerList {
-				log.Println(fmt.Sprintf("%v) %v", id, player))
+			for _, player := range globals.PlayerList {
+				utils.PrintUser(player)
 			}
 		case "disconnet", "dc":
 			_, err := strconv.Atoi(commands[1])

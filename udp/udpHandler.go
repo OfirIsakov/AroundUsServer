@@ -5,15 +5,18 @@ import (
 	"aroundUsServer/packet"
 	"aroundUsServer/player"
 	"aroundUsServer/tcp"
+	"aroundUsServer/utils"
 	"encoding/json"
 	"fmt"
 	"log"
 	"net"
+	"time"
 
 	"github.com/enriquebris/goconcurrentqueue"
 )
 
 var packetsQueue *goconcurrentqueue.FIFO
+var udpConnection *net.UDPConn
 
 type udpPacket struct {
 	Address *net.UDPAddr
@@ -37,7 +40,7 @@ func ListenUDP(host string, port int) {
 	}
 
 	//Create the connection
-	udpConn, err := net.ListenUDP(protocol, udpAddr)
+	udpConnection, err = net.ListenUDP(protocol, udpAddr)
 	if err != nil {
 		log.Println(err)
 	}
@@ -47,23 +50,26 @@ func ListenUDP(host string, port int) {
 		go handleIncomingUdpData()
 	}
 
+	// reate position updater
+	go updatePlayerPosition()
+
 	//Keep calling this function
 	for {
 		quit := make(chan struct{})
 		for i := 0; i < 1; i++ {
-			go getIncomingUdp(udpConn, quit)
+			go getIncomingUdp(quit)
 		}
 		<-quit // hang until an error
 	}
 }
 
-func getIncomingUdp(conn *net.UDPConn, quit chan struct{}) {
+func getIncomingUdp(quit chan struct{}) {
 	err := error(nil)
 
 	for err == nil {
 		buffer := make([]byte, 1024)
 
-		size, addr, err := conn.ReadFromUDP(buffer)
+		size, addr, err := udpConnection.ReadFromUDP(buffer)
 		if err != nil {
 			log.Println("Cant read packet!", err)
 			continue
@@ -91,7 +97,6 @@ func handleIncomingUdpData() {
 			continue
 		}
 
-		// Get the packet ID from the JSON
 		var dataPacket packet.ClientPacket
 		err = json.Unmarshal(dequeuedPacket.Data, &dataPacket)
 		if err != nil {
@@ -109,7 +114,9 @@ func handleIncomingUdpData() {
 
 func handleUdpData(userAddress *net.UDPAddr, clientPacket packet.ClientPacket) error {
 	if clientPacket.Type == packet.DialAddr { // {"type":5, "id": 0}
-		globals.PlayerList[clientPacket.PlayerID].UdpAddress = userAddress
+		if user, ok := globals.PlayerList[clientPacket.PlayerID]; ok {
+			user.UdpAddress = userAddress
+		}
 		return nil
 	}
 
@@ -128,15 +135,43 @@ func handleUdpData(userAddress *net.UDPAddr, clientPacket packet.ClientPacket) e
 		globals.PlayerList[clientPacket.PlayerID].PlayerPosition = newPosition
 	case packet.UpdateRotation: // {"type":7, "id": 0, "data":{"pitch":42, "yaw":11}}
 		var newRotation player.PlayerRotation
-		err := json.Unmarshal([]byte(dataPacket), &newRotation)
+		_ = json.Unmarshal([]byte(dataPacket), &newRotation)
 		if err != nil {
 			return fmt.Errorf("cant parse rotation player data")
 		}
 		globals.PlayerList[clientPacket.PlayerID].Rotation = newRotation
 	default:
-		tcp.SendErrorMsg(globals.PlayerList[clientPacket.PlayerID].TcpConnection, "Invalid UDP packet type!")
+		if user, ok := globals.PlayerList[clientPacket.PlayerID]; ok {
+			tcp.SendErrorMsg(user.TcpConnection, "Invalid UDP packet type!")
+		}
 
 	}
 
+	return nil
+}
+func updatePlayerPosition() {
+	for {
+		if len(globals.PlayerList) > 1 {
+			for _, user := range globals.PlayerList {
+				//TODO send name or id as well
+				//BUG where only one recieves
+				BroadcastUDP(user.PlayerPosition, packet.PositionBroadcast, []int{user.Id})
+			}
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+}
+
+// function wont send the message for players in the filter
+func BroadcastUDP(data interface{}, packetType int8, userFilter []int) error {
+	packetToSend := packet.StampPacket(data, packetType)
+	for _, user := range globals.PlayerList {
+		if !utils.IntInArray(user.Id, userFilter) && user.UdpAddress != nil {
+			_, err := packetToSend.SendUdpStream(udpConnection, user.UdpAddress)
+			if err != nil {
+				log.Println(err)
+			}
+		}
+	}
 	return nil
 }

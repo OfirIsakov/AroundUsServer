@@ -1,8 +1,11 @@
-package helpers
+package utils
 
 import (
+	"aroundUsServer/player"
 	"bytes"
 	"encoding/gob"
+	"encoding/json"
+	"fmt"
 )
 
 func GetBytes(key interface{}) ([]byte, error) {
@@ -22,4 +25,13 @@ func IntInArray(needle int, hayStack []int) bool {
 		}
 	}
 	return false
+}
+
+func PrintUser(user *player.Player) {
+	p, err := json.MarshalIndent(user, "", " ")
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	fmt.Printf("%s \n", p)
 }

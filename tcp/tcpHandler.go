@@ -4,7 +4,7 @@ import (
 	"aroundUsServer/globals"
 	"aroundUsServer/packet"
 	"aroundUsServer/player"
-	helpers "aroundUsServer/utils"
+	"aroundUsServer/utils"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -196,19 +196,23 @@ func initializePlayer(data []byte, tcpConnection net.Conn) (*player.Player, erro
 	// we need to keep a counter so the name will be in the format `<name> <count>`
 	var newNameCount int8
 	var nameOk bool
-	newName := newPlayer.Name
+	oldName := newPlayer.Name
+
 	for !nameOk {
 		nameOk = true
 		for _, player := range globals.PlayerList {
-			if newName == newPlayer.Name || player.Name == fmt.Sprintf("%s %d", newPlayer.Name, newNameCount) {
+			if player.Name == newPlayer.Name {
 				newNameCount++
 				nameOk = false
-				newName = fmt.Sprintf("%s %d", newPlayer.Name, newNameCount)
+				newPlayer.Name = fmt.Sprintf("%s %d", oldName, newNameCount)
 				break
 			}
 		}
 	}
-	newPlayer.Name = newName
+
+	if newNameCount == 0 {
+		newPlayer.Name = oldName
+	}
 
 	// check if the color is taken or invalid, if it is assign next not taken color
 	if int8(0) > newPlayer.Color || int8(len(globals.Colors)) <= newPlayer.Color || globals.Colors[newPlayer.Color] {
@@ -235,7 +239,8 @@ func initializePlayer(data []byte, tcpConnection net.Conn) (*player.Player, erro
 	newPlayer.PlayerPosition = globals.SpawnPositionsStack[len(globals.SpawnPositionsStack)-1]   // peek at the last element
 	globals.SpawnPositionsStack = globals.SpawnPositionsStack[:len(globals.SpawnPositionsStack)] // pop
 
-	log.Println("New player got generated: \n", newPlayer)
+	log.Println("New player got generated:")
+	utils.PrintUser(newPlayer)
 
 	return newPlayer, nil
 }
@@ -272,7 +277,7 @@ func SendErrorMsg(conn net.Conn, msg string) error {
 // function wont send the message for players in the filter
 func BroadcastTCP(data []byte, packetType int8, userFilter []int) error {
 	for _, user := range globals.PlayerList {
-		if !helpers.IntInArray(user.Id, userFilter) {
+		if !utils.IntInArray(user.Id, userFilter) {
 			log.Println("Sending data to everyone(Filtered) " + string(data))
 			packetToSend := packet.StampPacket(data, packetType)
 			_, err := packetToSend.SendTcpStream(user.TcpConnection)

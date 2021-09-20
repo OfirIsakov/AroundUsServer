@@ -59,14 +59,22 @@ func (dataPacket *ClientPacket) DataToBytes() ([]byte, error) {
 	return []byte(jsonString), nil
 }
 
-func StampPacket(data []byte, packetType int8) ServerPacket {
+func StampPacket(data interface{}, packetType int8) ServerPacket {
 	return ServerPacket{Type: packetType, Data: data}
 }
 
 func (packet *ServerPacket) SendTcpStream(tcpConnection net.Conn) (int, error) {
 	packetJson, err := json.Marshal(*packet)
 	if err != nil {
-		return 0, fmt.Errorf("error while marshaling packet")
+		return 0, fmt.Errorf("error while marshaling TCP packet")
 	}
 	return tcpConnection.Write([]byte(packetJson))
+}
+
+func (packet *ServerPacket) SendUdpStream(udpConnection *net.UDPConn, udpAddress *net.UDPAddr) (int, error) {
+	packetJson, err := json.Marshal(*packet)
+	if err != nil {
+		return 0, fmt.Errorf("error while marshaling UDP packet")
+	}
+	return udpConnection.WriteToUDP([]byte(packetJson), udpAddress)
 }
